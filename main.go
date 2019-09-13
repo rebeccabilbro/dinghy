@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -19,69 +18,74 @@ type Job struct {
 	Type    string
 	Sent    bool
 	Ack     bool
+	Worker  int
 }
 
-func process(sendChan chan Job, job Job) Job {
+func process(sendChan chan Job, job Job, worker int) Job {
 	job.Sent = true
+	job.Worker = worker
 	return job
 
 }
 
-func worker(wg *sync.WaitGroup, sendChan chan Job, receiveChan chan Job) {
+func worker(ID int, sendChan chan Job, receiveChan chan Job) {
 	for job := range sendChan {
-		output := process(sendChan, job)
+		fmt.Printf("\nWorker %v is working on job %v", ID, job)
+		output := process(sendChan, job, ID)
 		receiveChan <- output
-	}
-	wg.Done()
-}
+		fmt.Printf("\nWorker %v completed job %v", ID, output)
 
-func createWorkerPool(noOfWorkers int, sendChan chan Job, receiveChan chan Job) {
-	var wg sync.WaitGroup
-	for i := 0; i < noOfWorkers; i++ {
-		wg.Add(1)
-		go worker(&wg, sendChan, receiveChan)
 	}
-	wg.Wait()
-	close(receiveChan)
-}
-
-func allocate(noOfJobs int, sendChan chan Job) {
-	for i := 0; i < noOfJobs; i++ {
-		job := Job{ID: jobCounter}
-		jobCounter++
-		sendChan <- job
-	}
-	close(sendChan)
-}
-
-func result(done chan bool, receiveChan chan Job) {
-	for result := range receiveChan {
-		fmt.Printf("Job id %v\n", result.ID)
-	}
-	done <- true
-}
-func acknowledge(done chan Job, receiveChan chan Job) {
-	for result := range receiveChan {
-		result.Ack = true
-		fmt.Printf("Job id %v\n", result.ID)
-		done <- result
-	}
-
 }
 
 func main() {
-	liteTargets := make([]int64, 200)
-	sendMinnowChan := make(chan Job, 200)
-	receiveMinnowChan := make(chan Job, 200)
+	numWorkers := 10                             // the number of workers processing jobs
+	jobLen := int(300)                           // do 300 jobs at a time
+	liteTargets := make([]Job, 1000000)          // there are 1000000 total
+	nextTime := time.Now().Truncate(time.Minute) // make a counter
 
-	startTime := time.Now()
-	go allocate(len(liteTargets), sendMinnowChan)
-	done := make(chan Job)
-	go acknowledge(done, receiveMinnowChan)
-	noOfWorkers := 3
-	createWorkerPool(noOfWorkers, sendMinnowChan, receiveMinnowChan)
-	<-done
-	endTime := time.Now()
-	diff := endTime.Sub(startTime)
-	fmt.Println("total time taken ", diff.Seconds(), "seconds")
+	// loop over all jobs, 300 at a time
+	for start := 0; start < len(liteTargets); start += jobLen {
+		for {
+			stop := start + jobLen
+
+			if len(liteTargets) < stop {
+				stop = len(liteTargets)
+			}
+			if stop == start {
+				fmt.Println("\nAll done!")
+				return
+			}
+			loopTargets := liteTargets[start:stop]
+			start += jobLen
+
+			fmt.Printf("\n\n\nSending %v minnow jobs", jobLen)
+			minnowJobs := make(chan Job, jobLen)
+			minnowResults := make(chan Job, jobLen)
+
+			for x := 1; x <= numWorkers; x++ {
+				go worker(x, minnowJobs, minnowResults)
+			}
+
+			// make jobs
+			for _, j := range loopTargets {
+				j.ID = jobCounter
+				minnowJobs <- j
+				jobCounter++
+			}
+
+			close(minnowJobs)
+
+			for r := 1; r <= len(loopTargets); r++ {
+				job := <-minnowResults
+				job.Ack = true
+				fmt.Printf("\nJob received from worker: %v", job)
+			}
+			close(minnowResults)
+
+			// wait
+			nextTime = nextTime.Add(time.Second * 15)
+			time.Sleep(time.Until(nextTime))
+		}
+	}
 }
