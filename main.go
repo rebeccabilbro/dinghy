@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-var jobCounter int
+var liteJobCounter int
+var richJobCounter int
 
 // A Job consists of an array of IDs (Targets) for which we want to gather data.
 // ID is a unique id for each job in the current process
@@ -39,49 +40,54 @@ func worker(ID int, sendChan chan Job, receiveChan chan Job) {
 }
 
 func main() {
-	numWorkers := 10                             // the number of workers processing jobs
-	jobLen := int(300)                           // do 300 jobs at a time
-	liteTargets := make([]Job, 1000000)          // there are 1000000 total
-	nextTime := time.Now().Truncate(time.Minute) // make a counter
+	numWorkers := 20       // the number of workers processing jobs
+	liteJobLen := int(300) // how many lite jobs to do at a time
+	// richJobLen := int(15)                        // how many rich jobs to do at a time
+	liteTargets := make([]Job, 100000) // just get high level details
+	// richTargets := make([]Job, 1000000)          // get more user details
+	nextTime := time.Now().Truncate(time.Minute) // keep track of time
 
 	// loop over all jobs, 300 at a time
-	for start := 0; start < len(liteTargets); start += jobLen {
+	for liteStart := 0; liteStart < len(liteTargets); liteStart += liteJobLen {
 		for {
-			stop := start + jobLen
+			liteStop := liteStart + liteJobLen
 
-			if len(liteTargets) < stop {
-				stop = len(liteTargets)
+			if len(liteTargets) < liteStop {
+				liteStop = len(liteTargets)
 			}
-			if stop == start {
+			if liteStop == liteStart {
 				fmt.Println("\nAll done!")
 				return
 			}
-			loopTargets := liteTargets[start:stop]
-			start += jobLen
+			liteLoopTargets := liteTargets[liteStart:liteStop]
+			liteStart += liteJobLen
 
-			fmt.Printf("\n\n\nSending %v minnow jobs", jobLen)
-			minnowJobs := make(chan Job, jobLen)
-			minnowResults := make(chan Job, jobLen)
+			fmt.Printf("\n\n\nSending %v minnow jobs", liteJobLen)
+			minnowJobs := make(chan Job, liteJobLen)
+			minnowResults := make(chan Job, liteJobLen)
 
 			for x := 1; x <= numWorkers; x++ {
 				go worker(x, minnowJobs, minnowResults)
 			}
 
 			// make jobs
-			for _, j := range loopTargets {
-				j.ID = jobCounter
+			for _, j := range liteLoopTargets {
+				j.ID = liteJobCounter
+				j.Type = "lite"
 				minnowJobs <- j
-				jobCounter++
+				liteJobCounter++
 			}
 
 			close(minnowJobs)
 
-			for r := 1; r <= len(loopTargets); r++ {
+			for r := 1; r <= len(liteLoopTargets); r++ {
 				job := <-minnowResults
 				job.Ack = true
 				fmt.Printf("\nJob received from worker: %v", job)
 			}
 			close(minnowResults)
+
+			// loop over rich jobs
 
 			// wait
 			nextTime = nextTime.Add(time.Second * 15)
